@@ -149,21 +149,15 @@ void MapGenerator::fixConnectivity(int grid[GRID_SIZE][GRID_SIZE]) const {
 
 std::vector<InternalState::Npc> MapGenerator::generateNPCs() {
     std::vector<InternalState::Npc> npcs;
-    std::uniform_int_distribution<int> pos(0, GRID_SIZE - 1);
     std::uniform_int_distribution<int> dir(0, 3);
 
-    // 随机生成，不生成在障碍/炸弹上
-    for (int i = 0; i < cfg_.npc_count; ) {
-        int r = pos(rng_), c = pos(rng_);
-        if (r == 0 && c == 16) continue;  // 不和角色0起始位置重叠
-        if (r == 16 && c == 0) continue;  // 不和角色1起始位置重叠
-
+    // 所有NPC出生在地图中心(8,8)
+    for (int i = 0; i < cfg_.npc_count; i++) {
         npcs.push_back({
             .id = i + 1,
-            .pos = {r, c},
+            .pos = {8, 8},
             .move_dir = dir(rng_),
         });
-        i++;
     }
     return npcs;
 }
@@ -350,24 +344,37 @@ void GameSimulator::spawnGold(int round) {
     }
 }
 
-// ─── NPC 移动 ───
+// ─── NPC 移动（每轮最多3步） ───
 void GameSimulator::moveNPCs() {
     std::mt19937 npc_rng(current_round_ * 100 + cfg_.seed);
     std::uniform_int_distribution<int> dir(0, 3);
-    static const int dr[] = {-1, 1, 0, 0};  // 上下左右
+    static const int dr[] = {-1, 1, 0, 0};
     static const int dc[] = {0, 0, -1, 1};
 
     for (auto& npc : internal_.npcs) {
-        // 70% 概率沿当前方向, 30% 随机转向
-        if (npc_rng() % 10 < 3) {
-            npc.move_dir = dir(npc_rng);
-        }
-        int nr = npc.pos.row + dr[npc.move_dir];
-        int nc = npc.pos.col + dc[npc.move_dir];
-        if (isWalkable(nr, nc)) {
+        int steps = 0;
+        const int max_steps = 3;  // NPC每轮最多3步
+        while (steps < max_steps) {
+            // 70%沿当前方向, 30%随机转向
+            if (steps == 0 && npc_rng() % 10 < 3) {
+                npc.move_dir = dir(npc_rng);
+            }
+            int nr = npc.pos.row + dr[npc.move_dir];
+            int nc = npc.pos.col + dc[npc.move_dir];
+            if (!isValidPos(nr, nc) || !isWalkable(nr, nc)) {
+                npc.move_dir = dir(npc_rng);
+                continue;
+            }
             npc.pos = {nr, nc};
-        } else {
-            npc.move_dir = dir(npc_rng);  // 碰壁就转向
+            steps++;
+
+            // 捡金: 65% 向上取整
+            int& tile = internal_.true_grid[nr][nc];
+            if (tile >= 1) {
+                int picked = (tile * 65 + 99) / 100;  // ceil(65%)
+                tile -= picked;
+                internal_.total_gold_collected_enemy += picked;
+            }
         }
     }
 }
@@ -400,6 +407,85 @@ void GameSimulator::simulateEnemy() {
         }
         enemy_.pos[u] = p;
     }
+}
+
+// ─── 单步执行(逐步演示用) ───
+RoundResult GameSimulator::executeOneStep(int action, int k, int order) {
+    static int step_counter = 0;
+    static Position saved_pos[2];
+    static RoundResult result = {};
+
+    // 第一步时保存初始位置
+    if (step_counter == 0) {
+        result = {};
+        result.round = current_round_;
+        result.k = k;
+        result.order = order;
+        saved_pos[0] = visible_.my_units[0];
+        saved_pos[1] = visible_.my_units[1];
+    }
+
+    int unit = (step_counter < k) ? 0 : 1;
+    int idx = (unit == 0) ? step_counter : (step_counter - k);
+
+    StepResult& sr = result.steps[unit][idx];
+    sr.from = saved_pos[unit];
+
+    Position next = applyAction(saved_pos[unit], action);
+    if (next.row == saved_pos[1-unit].row && next.col == saved_pos[1-unit].col) {
+        sr.collision = true;
+        next = saved_pos[unit];
+    }
+    saved_pos[unit] = next;
+    sr.to = next;
+
+    int& tile = internal_.true_grid[next.row][next.col];
+    if (tile == -3) {
+        sr.hit_bomb = true;
+        int loss = (visible_.my_units_gold[unit] * 10 + 99) / 100;
+        visible_.my_units_gold[unit] = std::max(0, visible_.my_units_gold[unit] - loss);
+        if (unit == 0) internal_.bombs_triggered_p1++;
+        else internal_.bombs_triggered_p2++;
+        tile = 0;
+    }
+    if (tile >= 1) {
+        int picked = (tile * 65 + 99) / 100;
+        sr.gold_collected = picked;
+        visible_.my_units_gold[unit] += picked;
+        tile -= picked;
+        if (unit == 0) internal_.total_gold_collected_p1 += picked;
+        else internal_.total_gold_collected_p2 += picked;
+    }
+
+    step_counter++;
+
+    // 6步结束后更新位置并统计
+    if (step_counter >= S) {
+        visible_.my_units[0] = saved_pos[0];
+        visible_.my_units[1] = saved_pos[1];
+        for (int s = 0; s < k; s++) result.p1_gold_this_round += result.steps[0][s].gold_collected;
+        for (int s = k; s < S; s++) result.p2_gold_this_round += result.steps[1][s-k].gold_collected;
+        for (int s = 0; s < k; s++) if (result.steps[0][s].hit_bomb) result.p1_bombs++;
+        for (int s = k; s < S; s++) if (result.steps[1][s-k].hit_bomb) result.p2_bombs++;
+
+        moveNPCs();
+        simulateEnemy();
+        updateFog(cfg_.fog_radius);
+
+        result.p1_cum_gold = visible_.my_units_gold[0];
+        result.p2_cum_gold = visible_.my_units_gold[1];
+        result.p1_pos_r = visible_.my_units[0].row;
+        result.p1_pos_c = visible_.my_units[0].col;
+        result.p2_pos_r = visible_.my_units[1].row;
+        result.p2_pos_c = visible_.my_units[1].col;
+        result.enemy_cum_gold = enemy_.gold[0] + enemy_.gold[1];
+        result.gold_on_map = totalGoldOnMap();
+
+        current_round_++;
+        step_counter = 0;
+    }
+
+    return result;
 }
 
 // ─── 执行一轮 ───
@@ -451,23 +537,25 @@ RoundResult GameSimulator::executeRound(const int actions[S], int k, int order, 
                 continue;
             }
 
-            // 检查炸弹
+            // 检查炸弹: 损失当前金币的10%（向上取整）
             int& tile = internal_.true_grid[next.row][next.col];
             if (tile == -3) {
                 sr.hit_bomb = true;
-                visible_.my_units_gold[unit] = std::max(0, visible_.my_units_gold[unit] - 2);
+                int loss = (visible_.my_units_gold[unit] * 10 + 99) / 100;  // ceil(10%)
+                visible_.my_units_gold[unit] = std::max(0, visible_.my_units_gold[unit] - loss);
                 if (unit == 0) internal_.bombs_triggered_p1++;
                 else internal_.bombs_triggered_p2++;
                 tile = 0;  // 炸弹触发后消失
             }
 
-            // 捡金
+            // 捡金: 获得65%（向上取整）
             if (tile >= 1) {
-                sr.gold_collected = tile;
-                visible_.my_units_gold[unit] += tile;
-                if (unit == 0) internal_.total_gold_collected_p1 += tile;
-                else internal_.total_gold_collected_p2 += tile;
-                tile = 0;
+                int picked = (tile * 65 + 99) / 100;  // ceil(65%)
+                sr.gold_collected = picked;
+                visible_.my_units_gold[unit] += picked;
+                tile -= picked;  // 剩余金子留在地上
+                if (unit == 0) internal_.total_gold_collected_p1 += picked;
+                else internal_.total_gold_collected_p2 += picked;
             }
         }
     }
@@ -571,7 +659,7 @@ GameInput GameSimulator::buildGameInput(int round) const {
     input.my_units[1] = visible_.my_units[1];
     input.my_units_gold[0] = visible_.my_units_gold[0];
     input.my_units_gold[1] = visible_.my_units_gold[1];
-    input.gold_opp = enemy_.gold[0] + enemy_.gold[1];
+    input.gold_opp = 0;  // 规则: 不可见对手金币
 
     input.visible_enemies[0] = visible_.visible_enemies[0];
     input.visible_enemies[1] = visible_.visible_enemies[1];
@@ -665,12 +753,19 @@ void GameSimulator::printGrid() const {
             bool is_enemy0 = (enemy_.pos[0].row == r && enemy_.pos[0].col == c);
             bool is_enemy1 = (enemy_.pos[1].row == r && enemy_.pos[1].col == c);
 
+            // 统计该格NPC数量
+            int npc_count = 0;
+            for (const auto& npc : internal_.npcs)
+                if (npc.pos.row == r && npc.pos.col == c) npc_count++;
+
             if (is_unit0) {
                 printf("%s%s%2s%s", Color::BOLD, Color::GREEN, "U0", Color::RESET);
             } else if (is_unit1) {
                 printf("%s%s%2s%s", Color::BOLD, Color::GREEN, "U1", Color::RESET);
             } else if (is_enemy0 || is_enemy1) {
                 printf("%s%s%2s%s", Color::BOLD, Color::RED, "E", Color::RESET);
+            } else if (npc_count > 0) {
+                printf("%s%s%2s%s", Color::MAGENTA, Color::BOLD, "N", Color::RESET);
             } else if (tile == -5) {
                 printf(" %s·%s", Color::DIM, Color::RESET);
             } else if (tile == -3) {

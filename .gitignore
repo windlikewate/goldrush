@@ -3,14 +3,14 @@
 sim
 *.o
 
-# CSV 回放文件
-replay_*.csv
+# 数据输出
+data/
 
 # macOS
 .DS_Store
 __MACOSX/
 
-# Windows Zone.Identifier（WSL从Windows拷贝的文件元数据）
+# Windows Zone.Identifier
 *:Zone.Identifier
 *:*:Zone.Identifier
 

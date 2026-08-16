@@ -171,6 +171,19 @@ void runDemo() {
     cfg.obstacle_density = 0.08;
     cfg.fog_radius = 2;
 
+    // 选择策略
+    printf("选择策略: 1=贪心策略, 2=随机策略, 3=多因子策略\n");
+    printf("> ");
+    int choice = getchar();
+    while (getchar() != '\n');
+    GameSimulator::ActionFunc strategy;
+    const char* sname;
+    if (choice == '1') { strategy = greedyStrategy; sname = "贪心策略"; }
+    else if (choice == '2') { strategy = randomStrategy; sname = "随机策略"; }
+    else if (choice == '3') { strategy = factorStrategy; sname = "多因子策略"; }
+    else { strategy = greedyStrategy; sname = "贪心策略(默认)"; }
+    printf("使用: %s\n\n", sname);
+
     GameSimulator sim(cfg);
     sim.reset();
 
@@ -193,14 +206,25 @@ void runDemo() {
         }
 
         GameInput input = sim.buildGameInput(round);
-        GameOutput output = greedyStrategy(&input);
+        GameOutput output = strategy(&input);
 
-        RoundResult result = sim.executeRound(output.actions, output.k, output.order, output.vp);
+        // 逐步执行6步
+        RoundResult result;
+        for (int step = 0; step < S; step++) {
+            result = sim.executeOneStep(output.actions[step], output.k, output.order);
 
-        // 打印真实地图和迷雾地图
-        sim.printGrid();
-        printf("\n");
-        sim.printFogGrid();
+            printf("%s--- 步骤 %d (动作: %s) ---%s\n",
+                   Color::DIM, step + 1,
+                   output.actions[step] == 0 ? "上" :
+                   output.actions[step] == 1 ? "下" :
+                   output.actions[step] == 2 ? "左" :
+                   output.actions[step] == 3 ? "右" : "不动",
+                   Color::RESET);
+            sim.printGrid();
+            printf("按 Enter 继续...\n");
+            getchar();
+        }
+
         sim.printStats();
 
         // 本轮捡到的金
@@ -299,8 +323,8 @@ void runFullGame(int rounds, int seed) {
     printf("  P90延迟: ~%.2f ms (估计)\n\n", (double)duration.count() / rounds * 1.5);
 
     // 导出 CSV
-    char csv_name[128];
-    snprintf(csv_name, sizeof(csv_name), "replay_seed%d_r%d.csv", seed, rounds);
+    char csv_name[256];
+    snprintf(csv_name, sizeof(csv_name), "../data/replay_seed%d_r%d.csv", seed, rounds);
     sim.replayToCSV(replay, csv_name);
 }
 
@@ -369,8 +393,8 @@ void runComparison(int rounds, int seed) {
     // 导出每个策略的CSV
     printf("\n");
     for (const auto& r : results) {
-        char csv_name[128];
-        snprintf(csv_name, sizeof(csv_name), "replay_%s_seed%d.csv", r.name, seed);
+        char csv_name[256];
+        snprintf(csv_name, sizeof(csv_name), "../data/replay_%s_seed%d.csv", r.name, seed);
         // 用临时simulator导出(配置和上面一致)
         MapConfig tmp_cfg;
         tmp_cfg.seed = seed;
@@ -431,11 +455,14 @@ int main(int argc, char* argv[]) {
         if (ba.loadCSV(csvA)) {
             auto analysis = ba.computeIC();
             ba.printReport(analysis);
-            // 导出
-            std::string out(csvA);
-            size_t dot = out.find(".csv");
-            if (dot != std::string::npos) out = out.substr(0, dot);
-            ba.exportReport(analysis, out + "_factor_report.csv");
+            // 导出报告到 data/
+            std::string basename = csvA;
+            // 提取文件名(不含路径和扩展名)
+            size_t slash = basename.rfind('/');
+            if (slash != std::string::npos) basename = basename.substr(slash + 1);
+            size_t dot = basename.find(".csv");
+            if (dot != std::string::npos) basename = basename.substr(0, dot);
+            ba.exportReport(analysis, "../data/" + basename + "_factor_report.csv");
         }
     } else if (compareCsv) {
         BacktestAnalyzer::compareStrategies(csvA, csvA, csvB, csvB);

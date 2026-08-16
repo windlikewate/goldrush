@@ -153,7 +153,7 @@ std::vector<FactorAnalysis> BacktestAnalyzer::computeIC() {
             for (auto& d : r) v.push_back((double)(d.p1_steps + d.p2_steps) / 6.0);
             return v;
         }},
-        {"F9_中心靠近", [](const auto& r) {
+        {"F8_中心靠近", [](const auto& r) {
             std::vector<double> v;
             for (auto& d : r) {
                 // 到中心(8,8)的曼哈顿距离, 越近越好(取反)

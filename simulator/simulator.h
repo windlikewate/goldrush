@@ -34,8 +34,8 @@ struct MapConfig {
     int    outer_gold_count = 3;     // 外围每次生成金子数
     int    gold_max_value = 5;    // 单个格子最大金子数
     int    gold_min_value = 1;    // 单个格子最小金子数
-    int    npc_count = 5;         // NPC 数量
-    double fog_radius = 2.5;    // 初始迷雾半径(方形, 2.5→向下取整=2)
+    int    npc_count = 7;         // NPC 数量(规则:7)
+    double fog_radius = 2;        // 初始迷雾半径(方形, 半径2=5x5视野)
     int    vp_cost_7x7 = 1;       // 购买7x7视野费用(金/回合)
     int    vp_cost_9x9 = 2;       // 购买9x9视野费用(金/回合)
     int    vision_7x7_radius = 3; // 7x7视野 = 半径3 (2*3+1=7)
@@ -172,6 +172,9 @@ public:
     // k: 分割点 (角色0走前k步, 角色1走后6-k步)
     // order: 0=角色0先, 1=角色1先
     RoundResult executeRound(const int actions[S], int k, int order, int vp = 0);
+
+    // 单步执行(用于逐步演示)
+    RoundResult executeOneStep(int action, int k, int order);
 
     // 获取当前选手可见状态
     VisibleState getVisibleState(int round) const;

@@ -52,10 +52,10 @@ UnitSimulation simulateUnit(const GameInput* input, Position start,
         sim.actual_moves++;
         visited.insert({cur.row, cur.col});
 
-        // 捡金/炸弹
+        // 捡金/炸弹 (65%向上取整)
         int tile = input->grid[cur.row][cur.col];
         if (tile >= 1) {
-            sim.gold_collected += tile;
+            sim.gold_collected += (tile * 65 + 99) / 100;  // ceil(65%)
         } else if (tile == -3) {
             sim.bombs_hit++;
         }
@@ -129,13 +129,7 @@ FactorValues computeFactors(const GameInput* input, const int actions[S], int k)
     int center_dist = distToCenter(sim0.end_pos) + distToCenter(sim1.end_pos);
     f.positional_adv = -center_dist;  // 负号: 越近分越高
 
-    // ─── F8: 金币差距因子 ───
-    int my_total = input->my_units_gold[0] + input->my_units_gold[1];
-    int diff = my_total - input->gold_opp;  // 正=领先, 负=落后
-    // 落后→正值(鼓励激进), 领先→负值(鼓励保守)
-    f.deficit_factor = -diff / 10.0;  // 归一化
-
-    // ─── F9: 中心靠近因子 ───
+    // ─── F8: 中心靠近因子 ───
     // 结束位置到地图中心(8,8)的曼哈顿距离, 越近越好(取反)
     int center_dist9 = manhattan(sim0.end_pos, {8, 8}) + manhattan(sim1.end_pos, {8, 8});
     f.center_proximity = -center_dist9;
@@ -144,7 +138,7 @@ FactorValues computeFactors(const GameInput* input, const int actions[S], int k)
 }
 
 // ─── 综合评分 ───
-double scoreFactors(const FactorValues& f, const double weights[9]) {
+double scoreFactors(const FactorValues& f, const double weights[8]) {
     return weights[0] * f.gold_gain
          + weights[1] * f.bomb_risk
          + weights[2] * f.exploration
@@ -152,6 +146,5 @@ double scoreFactors(const FactorValues& f, const double weights[9]) {
          + weights[4] * f.npc_encounter
          + weights[5] * f.path_efficiency
          + weights[6] * f.positional_adv
-         + weights[7] * f.deficit_factor
-         + weights[8] * f.center_proximity;
+         + weights[7] * f.center_proximity;
 }

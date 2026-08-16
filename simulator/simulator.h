@@ -8,6 +8,12 @@
 #include <vector>
 #include <string>
 
+// ─── 地图生成方式（固定or随机） ───
+enum class MapGenMode {
+    RANDOM_GENERATED,
+    CUSTOM_FIXED
+};
+
 // ─── 颜色/ANSI ───
 namespace Color {
     constexpr const char* RESET   = "\033[0m";
@@ -40,6 +46,13 @@ struct MapConfig {
     int    vp_cost_9x9 = 2;       // 购买9x9视野费用(金/回合)
     int    vision_7x7_radius = 3; // 7x7视野 = 半径3 (2*3+1=7)
     int    vision_9x9_radius = 4; // 9x9视野 = 半径4 (2*4+1=9)
+
+    // 新增：自定义地图与位置支持
+    MapGenMode mode = MapGenMode::RANDOM_GENERATED;
+    int custom_grid[GRID_SIZE][GRID_SIZE] = {};
+    bool custom_positions = false;
+    Position custom_my_units[2] = {};
+    Position custom_enemy_units[2] = {};
 };
 
 // ─── 游戏内部状态(不暴露给选手) ───
@@ -190,8 +203,14 @@ public:
     int enemyGold() const;
     int totalGoldOnMap() const;
 
-    // 完整自动对战(选手策略 vs 对手策略)
+    // 策略类型定义
     using ActionFunc = GameOutput(*)(const GameInput*);
+
+    // 设置对手策略
+    void setEnemyStrategy(ActionFunc strategy) { enemy_strategy_ = strategy; }
+
+    // 完整自动对战(选手策略 vs 对手策略)
+    Replay runFullGame(ActionFunc playerStrategy, ActionFunc enemyStrategy, int total_rounds = 500);
     Replay runFullGame(ActionFunc playerStrategy, int total_rounds = 500);
 
     // 可视化
@@ -209,6 +228,7 @@ private:
     InternalState internal_;
     VisibleState visible_;
     int current_round_ = 0;
+    ActionFunc enemy_strategy_ = nullptr; // 对手策略函数指针
 
     // 内部工具
     bool isValidPos(int row, int col) const;

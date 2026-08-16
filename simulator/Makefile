@@ -1,11 +1,10 @@
-# GoldRush 2.0 模拟器 Makefile
 CXX      = g++
 CXXFLAGS = -std=c++17 -O2 -march=native -Wall
 INCLUDE  = -I../src
 
 TARGET   = sim
-SRCS     = main_sim.cpp simulator.cpp factors.cpp backtest.cpp
-HDRS     = simulator.h factors.h backtest.h ../src/game_api.h
+SRCS     = main_sim.cpp simulator.cpp factors.cpp factors_enhanced.cpp backtest.cpp
+HDRS     = simulator.h factors.h factors_enhanced.h backtest.h ../src/game_api.h
 
 all: $(TARGET)
 

@@ -17,6 +17,16 @@ static bool isCenter(int r, int c) {
 }
 
 void MapGenerator::generate(int grid[GRID_SIZE][GRID_SIZE]) {
+    // 新增：支持固定地图模式
+    if (cfg_.mode == MapGenMode::CUSTOM_FIXED) {
+        for (int r = 0; r < GRID_SIZE; r++) {
+            for (int c = 0; c < GRID_SIZE; c++) {
+                grid[r][c] = cfg_.custom_grid[r][c];
+            }
+        }
+        return;
+    }
+
     std::uniform_int_distribution<int> gold_val(cfg_.gold_min_value, cfg_.gold_max_value);
 
     // 1. 全部初始化为空地
@@ -194,15 +204,24 @@ void GameSimulator::reset() {
     // 生成 NPC
     internal_.npcs = map_gen_.generateNPCs();
 
-    // 玩家初始位置(四角对角)
-    visible_.my_units[0] = {0, 16};    // 右上角
-    visible_.my_units[1] = {16, 0};    // 左下角
+    // 新增：如果开启自定义位置，则采用配置值；否则使用默认四角位置
+    if (cfg_.custom_positions) {
+        visible_.my_units[0] = cfg_.custom_my_units[0];
+        visible_.my_units[1] = cfg_.custom_my_units[1];
+        enemy_.pos[0] = cfg_.custom_enemy_units[0];
+        enemy_.pos[1] = cfg_.custom_enemy_units[1];
+    } else {
+        // 玩家初始位置(四角对角)
+        visible_.my_units[0] = {0, 16};    // 右上角
+        visible_.my_units[1] = {16, 0};    // 左下角
+
+        // 对手初始位置(四角对角)
+        enemy_.pos[0] = {0, 0};            // 左上角
+        enemy_.pos[1] = {16, 16};          // 右下角
+    }
+
     visible_.my_units_gold[0] = 0;
     visible_.my_units_gold[1] = 0;
-
-    // 对手初始位置(四角对角)
-    enemy_.pos[0] = {0, 0};            // 左上角
-    enemy_.pos[1] = {16, 16};          // 右下角
     enemy_.gold[0] = 0;
     enemy_.gold[1] = 0;
 
@@ -379,27 +398,101 @@ void GameSimulator::moveNPCs() {
     }
 }
 
-// ─── 对手简单AI(贪心向最近的可见金子) ───
+// ─── 对手简单AI ───
 void GameSimulator::simulateEnemy() {
-    // 这里简化：对手每轮随机走6步(后续可替换为更好的策略)
+    // 新增：如果外部设置了对手策略，则优先调用设置的策略
+    if (enemy_strategy_) {
+        // 构造对手视角的输入
+        GameInput enemy_input = buildGameInput(current_round_);
+
+        // 1. 重构对手的专属迷雾网格，不使用被污染的玩家 fog_grid
+        for (int r = 0; r < GRID_SIZE; r++) {
+            for (int c = 0; c < GRID_SIZE; c++) {
+                enemy_input.grid[r][c] = -5; // 初始化为全雾
+            }
+        }
+
+        // 以对手角色的位置揭开迷雾
+        auto reveal_enemy = [&](Position center, int radius) {
+            for (int r = std::max(0, center.row - radius); r <= std::min(GRID_SIZE - 1, center.row + radius); r++) {
+                for (int c = std::max(0, center.col - radius); c <= std::min(GRID_SIZE - 1, center.col + radius); c++) {
+                    enemy_input.grid[r][c] = internal_.true_grid[r][c];
+                }
+            }
+        };
+        reveal_enemy(enemy_.pos[0], cfg_.fog_radius);
+        reveal_enemy(enemy_.pos[1], cfg_.fog_radius);
+
+        // 2. 交换身份：将对手自身的双角色位置与金币设为 my_units
+        enemy_input.my_units[0] = enemy_.pos[0];
+        enemy_input.my_units[1] = enemy_.pos[1];
+        enemy_input.my_units_gold[0] = enemy_.gold[0];
+        enemy_input.my_units_gold[1] = enemy_.gold[1];
+
+        // 注：如果 GameInput 中包含 visible_enemies / visible_npcs 等字段，
+        // 且其结构与 visible_ 不同，可在此处根据对手的视野网格重新筛选并填入对应的字段中。
+
+        // 获取外部注入AI的动作
+        GameOutput enemy_out = enemy_strategy_(&enemy_input);
+
+        // 执行对手动作
+        Position unit_pos[2] = {enemy_.pos[0], enemy_.pos[1]};
+        int unit_steps[2] = {enemy_out.k, S - enemy_out.k};
+        int exec_order[2] = {0, 1};
+        if (enemy_out.order == 1) { exec_order[0] = 1; exec_order[1] = 0; }
+
+        for (int ei = 0; ei < 2; ei++) {
+            int unit = exec_order[ei];
+            int steps = unit_steps[unit];
+            int start_idx = (unit == 0) ? 0 : enemy_out.k;
+
+            for (int s = 0; s < steps; s++) {
+                int action = enemy_out.actions[start_idx + s];
+                Position next = applyAction(unit_pos[unit], action);
+
+                // 简单的防自身碰撞处理
+                int other = 1 - unit;
+                if (next.row == unit_pos[other].row && next.col == unit_pos[other].col) {
+                    next = unit_pos[unit]; 
+                }
+                unit_pos[unit] = next;
+
+                if (!isWalkable(next.row, next.col)) continue;
+
+                int& tile = internal_.true_grid[next.row][next.col];
+                if (tile == -3) { // 踩炸弹
+                    int loss = (enemy_.gold[unit] * 10 + 99) / 100;
+                    enemy_.gold[unit] = std::max(0, enemy_.gold[unit] - loss);
+                    tile = 0;
+                } else if (tile >= 1) { // 捡金
+                    int picked = (tile * 65 + 99) / 100;
+                    enemy_.gold[unit] += picked;
+                    internal_.total_gold_collected_enemy += picked;
+                    tile -= picked;
+                }
+            }
+        }
+        enemy_.pos[0] = unit_pos[0];
+        enemy_.pos[1] = unit_pos[1];
+        return;
+    }
+
+    // 默认随机策略
     std::mt19937 enemy_rng(current_round_ * 200 + cfg_.seed);
     std::uniform_int_distribution<int> act(0, 4);
 
-    // 简化：对手每个角色走3步随机
     for (int u = 0; u < 2; u++) {
         Position p = enemy_.pos[u];
         for (int s = 0; s < 3; s++) {
             int a = act(enemy_rng);
             p = applyAction(p, a);
 
-            // 捡金
             int& tile = internal_.true_grid[p.row][p.col];
             if (tile >= 1) {
                 enemy_.gold[u] += tile;
                 internal_.total_gold_collected_enemy += tile;
                 tile = 0;
             }
-            // 踩炸弹
             if (tile == -3) {
                 enemy_.gold[u] = std::max(0, enemy_.gold[u] - 2);
                 tile = 0;
@@ -715,13 +808,17 @@ int GameSimulator::totalGoldOnMap() const {
 }
 
 // ─── 完整对战 ───
-Replay GameSimulator::runFullGame(ActionFunc playerStrategy, int total_rounds) {
+
+Replay GameSimulator::runFullGame(ActionFunc playerStrategy, ActionFunc enemyStrategy, int total_rounds) {
+    if (enemyStrategy) {
+        setEnemyStrategy(enemyStrategy);
+    }
     reset();
     Replay replay;
     replay.seed = cfg_.seed;
     replay.total_rounds = total_rounds;
 
-    for (int r = 0; r < total_rounds; r++) {
+for (int r = 0; r < total_rounds; r++) {
         GameInput input = buildGameInput(r);
         GameOutput output = playerStrategy(&input);
 
@@ -734,6 +831,10 @@ Replay GameSimulator::runFullGame(ActionFunc playerStrategy, int total_rounds) {
     replay.enemy_final_gold = enemy_.gold[0] + enemy_.gold[1];
 
     return replay;
+}
+
+Replay GameSimulator::runFullGame(ActionFunc playerStrategy, int total_rounds) {
+    return runFullGame(playerStrategy, nullptr, total_rounds);
 }
 
 // ─── 可视化 ───

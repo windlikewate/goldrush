@@ -1,0 +1,20 @@
+# 编译产物
+*.so
+sim
+*.o
+
+# CSV 回放文件
+replay_*.csv
+
+# macOS
+.DS_Store
+__MACOSX/
+
+# Windows Zone.Identifier（WSL从Windows拷贝的文件元数据）
+*:Zone.Identifier
+*:*:Zone.Identifier
+
+# IDE
+.vscode/
+.idea/
+*.swp

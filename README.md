@@ -1,20 +1,35 @@
-# GoldRush 2.0 选手示例代码
+# GoldRush 2.0
 
-C++和Python的示例策略, 逻辑相同:
-- 角色0走 4 步、角色1走 2 步(k=4), 每一步动作随机(0..4);
-- 本回合有快照(snapshot_valid)时购买 7x7 视野(vp=1), 否则不买。
+17×17 网格策略游戏，500轮比金币。
 
-动作编码: 0=上 1=下 2=左 3=右 4=不动
+## 目录结构
 
-## C++ (cpp/)
-- 入口 extern "C" GameOutput moveDecision(const GameInput* input)
-- Makefile 用 -O2 -march=native -fPIC -shared
-- 提交: make编译出的so文件
+```
+game/
+├── src/           # 题目代码 + 选手策略
+│   ├── game_api.h # C++ 接口定义
+│   ├── game_api.py# Python 类型定义
+│   ├── test.py    # 输出格式验证
+│   └── solutions/ # 示例策略
+│       ├── player.cpp
+│       └── player.py
+├── simulator/     # 游戏模拟器 + 回测系统
+│   ├── simulator.h/cpp  # 模拟器
+│   ├── factors.h/cpp    # 多因子计算
+│   ├── backtest.h/cpp   # 回测分析
+│   └── main_sim.cpp     # 入口
+├── docs/          # 文档
+│   ├── README.md        # 原始规则
+│   ├── SIMULATOR.md     # 模拟器使用指南
+│   └── strategy.md      # 因子策略文档
+└── data/          # 回放数据
+    └── csv/
+```
 
-## Python (python/)
-- player.py 内含 class Player, 方法 MoveDecision(self, game_input)
-- 提交: 直接提交 player.py
+## 快速开始
 
-## 合法性(否则判负)
-- actions 每个 ∈ [0,4], k ∈ [0,6], order ∈ {0,1}, vp ∈ {0,1,2}
-- 每轮必须正确返回, 格式非法或运行时错误直接判负
+```bash
+cd simulator/
+make
+./sim --compare --seed 42 --rounds 500
+```
